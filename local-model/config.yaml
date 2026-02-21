@@ -1,0 +1,12 @@
+model_list:
+  - model_name: qwen3-coder
+    litellm_params:
+      # 注意：必须删除 openai/ 前缀，直接写 vllm 识别的名字
+      # 并且这里要和 vLLM --model 后面的路径完全一致
+      model: openai//models/Qwen3-Next-80B-A3B-Instruct-NVFP4
+      api_base: "http://localhost:8000/v1"
+      api_key: "not-needed"
+
+litellm_settings:
+  drop_params: True
+  set_verbose: False
