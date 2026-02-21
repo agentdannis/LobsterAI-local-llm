@@ -86,7 +86,7 @@ function getEffectiveProviderApiFormat(providerName: string, apiFormat: unknown)
 }
 
 function providerRequiresApiKey(providerName: string): boolean {
-  return providerName !== 'ollama';
+  return providerName !== 'ollama' && providerName !== 'vllm';
 }
 
 function resolveMatchedProvider(appConfig: AppConfig): { matched: MatchedProvider | null; error?: string } {
@@ -167,10 +167,9 @@ export function resolveCurrentApiConfig(target: OpenAICompatProxyTarget = 'local
 
   const resolvedBaseURL = matched.providerConfig.baseUrl.trim();
   const resolvedApiKey = matched.providerConfig.apiKey?.trim() || '';
-  const effectiveApiKey = matched.providerName === 'ollama'
-    && matched.apiFormat === 'anthropic'
-    && !resolvedApiKey
-    ? 'sk-ollama-local'
+  const isLocalProvider = matched.providerName === 'ollama' || matched.providerName === 'vllm';
+  const effectiveApiKey = isLocalProvider && !resolvedApiKey
+    ? 'sk-local'
     : resolvedApiKey;
 
   if (matched.apiFormat === 'anthropic') {

@@ -68,7 +68,12 @@ const SANDBOX_HISTORY_MAX_MESSAGE_CHARS = 4000;
 const STREAM_UPDATE_THROTTLE_MS = 90;
 const STREAMING_TEXT_MAX_CHARS = 120_000;
 const STREAMING_THINKING_MAX_CHARS = 60_000;
-const TOOL_RESULT_MAX_CHARS = 120_000;
+// 限制单次工具调用结果大小（如 PDF/网页全文），防止本地 LLM 因 KV Cache 撑爆内存导致系统卡死
+// 30_000 chars ≈ 7500 tokens，足够读完论文摘要+引言+结论，但不会加载整篇 PDF
+const TOOL_RESULT_MAX_CHARS = 30_000;
+// 单次会话工具结果累积上限：超过此值时自动压缩上下文，重置 SDK 会话以释放 vLLM KV Cache
+// 80_000 chars ≈ 20K tokens；典型场景：读了 2-3 篇论文后触发一次压缩
+const AUTO_COMPRESS_TOOL_RESULT_THRESHOLD = 80_000;
 const FINAL_RESULT_MAX_CHARS = 120_000;
 const STDERR_TAIL_MAX_CHARS = 24_000;
 const CONTENT_TRUNCATED_HINT = '\n...[truncated to prevent memory pressure]';
@@ -376,6 +381,8 @@ export class CoworkRunner extends EventEmitter {
   private pendingPermissions: Map<string, PendingPermission> = new Map();
   private sandboxPermissions: Map<string, SandboxPendingPermission> = new Map();
   private stoppedSessions: Set<string> = new Set();
+  // 跟踪每个会话累积的工具调用结果字符数，用于自动上下文压缩
+  private sessionToolResultChars: Map<string, number> = new Map();
   private turnMemoryQueue: QueuedTurnMemoryUpdate[] = [];
   private turnMemoryQueueKeys: Set<string> = new Set();
   private lastTurnMemoryKeyBySession: Map<string, string> = new Map();
@@ -2126,8 +2133,31 @@ export class CoworkRunner extends EventEmitter {
       this.store.getConfig().memoryEnabled
     );
 
+    // 自动上下文压缩：当工具调用结果累积过多（如读取多篇 PDF）时，
+    // 重置 SDK 会话（清空 vLLM KV Cache），并将关键对话摘要注入到下一轮 prompt 中。
+    const accumulatedToolResultChars = this.sessionToolResultChars.get(sessionId) ?? 0;
+    let effectivePrompt = prompt;
+    if (accumulatedToolResultChars >= AUTO_COMPRESS_TOOL_RESULT_THRESHOLD) {
+      coworkLog('INFO', 'continueSession', '上下文自动压缩触发', {
+        sessionId,
+        accumulatedToolResultChars,
+        threshold: AUTO_COMPRESS_TOOL_RESULT_THRESHOLD,
+      });
+      const compressedContext = this.buildCompressedContext(sessionId);
+      // 重置 SDK 会话 ID，下次 query() 将开启新对话，vLLM KV Cache 随之清空
+      activeSession.claudeSessionId = null;
+      this.sessionToolResultChars.set(sessionId, 0);
+      effectivePrompt = `${compressedContext}\n用户新请求：${prompt}`;
+      // 向 UI 发一条提示消息
+      const notifyMsg = this.store.addMessage(sessionId, {
+        type: 'assistant',
+        content: '> ♻️ 上下文已自动压缩（工具结果累积过多），已重置对话上下文，从关键摘要继续...',
+      });
+      this.emit('message', sessionId, notifyMsg);
+    }
+
     try {
-      await this.runClaudeCode(activeSession, prompt, sessionCwd, effectiveSystemPrompt);
+      await this.runClaudeCode(activeSession, effectivePrompt, sessionCwd, effectiveSystemPrompt);
     } catch (error) {
       console.error('Cowork continue error:', error);
     }
@@ -2158,6 +2188,7 @@ export class CoworkRunner extends EventEmitter {
     }
     this.clearPendingPermissions(sessionId);
     this.clearSandboxPermissions(sessionId);
+    this.sessionToolResultChars.delete(sessionId);
     this.store.updateSession(sessionId, { status: 'idle' });
   }
 
@@ -3818,6 +3849,11 @@ export class CoworkRunner extends EventEmitter {
 
         const content = this.formatToolResultContent(record);
         const isError = Boolean(record.is_error);
+        // 追踪本会话累积的工具结果字符数，用于自动上下文压缩
+        this.sessionToolResultChars.set(
+          sessionId,
+          (this.sessionToolResultChars.get(sessionId) ?? 0) + content.length
+        );
         const message = this.store.addMessage(sessionId, {
           type: 'tool_result',
           content,
@@ -3956,6 +3992,11 @@ export class CoworkRunner extends EventEmitter {
       if (blockType === 'tool_result') {
         flushTextParts();
         const content = this.formatToolResultContent(record);
+        // 追踪本会话累积的工具结果字符数，用于自动上下文压缩
+        this.sessionToolResultChars.set(
+          sessionId,
+          (this.sessionToolResultChars.get(sessionId) ?? 0) + content.length
+        );
         const isError = Boolean(record.is_error);
         const message = this.store.addMessage(sessionId, {
           type: 'tool_result',
@@ -4551,6 +4592,34 @@ export class CoworkRunner extends EventEmitter {
     } catch {
       return this.truncateLargeContent(String(raw), TOOL_RESULT_MAX_CHARS);
     }
+  }
+
+  /**
+   * 从当前会话的已存储消息中提取关键上下文（仅保留用户消息和助手回复，跳过工具结果）。
+   * 用于在触发自动压缩时，向重置后的 SDK 会话注入精简的会话摘要。
+   */
+  private buildCompressedContext(sessionId: string): string {
+    const session = this.store.getSession(sessionId);
+    if (!session?.messages?.length) return '';
+
+    const lines: string[] = [
+      '<prior_context>',
+      '以下是本次会话的关键摘要（上下文已自动压缩以释放 KV Cache）：\n',
+    ];
+
+    for (const msg of session.messages) {
+      if (msg.type === 'user') {
+        lines.push(`[用户]: ${msg.content.slice(0, 600)}`);
+      } else if (msg.type === 'assistant' && !msg.metadata?.isThinking) {
+        // 只保留助手的文字回复，截断以控制总长度
+        const snippet = msg.content.slice(0, 1200);
+        if (snippet.trim()) lines.push(`[助手]: ${snippet}`);
+      }
+      // 跳过 tool_use / tool_result —— 这正是占用大量上下文的部分
+    }
+
+    lines.push('</prior_context>\n');
+    return lines.join('\n');
   }
 
   private handleError(sessionId: string, error: string): void {
