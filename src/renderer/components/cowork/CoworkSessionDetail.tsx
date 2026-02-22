@@ -795,8 +795,36 @@ const CopyButton: React.FC<{
   );
 };
 
-const UserMessageItem: React.FC<{ message: CoworkMessage; skills: Skill[] }> = ({ message, skills }) => {
+const UserMessageItem: React.FC<{
+  message: CoworkMessage;
+  skills: Skill[];
+  isEditing?: boolean;
+  editingContent?: string;
+  onEditStart?: () => void;
+  onEditChange?: (value: string) => void;
+  onEditSave?: () => void;
+  onEditCancel?: () => void;
+  canEdit?: boolean;
+}> = ({
+  message,
+  skills,
+  isEditing = false,
+  editingContent = '',
+  onEditStart,
+  onEditChange,
+  onEditSave,
+  onEditCancel,
+  canEdit = false,
+}) => {
   const [isHovered, setIsHovered] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (isEditing && textareaRef.current) {
+      textareaRef.current.focus();
+      textareaRef.current.select();
+    }
+  }, [isEditing]);
 
   // Get skills used for this message
   const messageSkillIds = (message.metadata as CoworkMessageMetadata)?.skillIds || [];
@@ -814,30 +842,75 @@ const UserMessageItem: React.FC<{ message: CoworkMessage; skills: Skill[] }> = (
         <div className="pl-4 sm:pl-8 md:pl-12">
           <div className="flex items-start gap-3 flex-row-reverse">
             <div className="w-full min-w-0 flex flex-col items-end">
-              <div className="w-fit max-w-[42rem] rounded-2xl px-4 py-2.5 dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text shadow-subtle">
-                <MarkdownContent
-                  content={message.content}
-                  className="max-w-none whitespace-pre-wrap break-words"
-                />
-              </div>
-              <div className="flex items-center justify-end gap-1.5 mt-1">
-                {messageSkills.map(skill => (
-                  <div
-                    key={skill.id}
-                    className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-claude-accent/5 dark:bg-claude-accent/10"
-                    title={skill.description}
-                  >
-                    <PuzzlePieceIcon className="h-2.5 w-2.5 text-claude-accent/70" />
-                    <span className="text-[10px] font-medium text-claude-accent/70 max-w-[60px] truncate">
-                      {skill.name}
-                    </span>
+              {isEditing ? (
+                <div className="w-full max-w-[42rem]">
+                  <textarea
+                    ref={textareaRef}
+                    value={editingContent}
+                    onChange={(e) => onEditChange?.(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        onEditCancel?.();
+                      }
+                    }}
+                    className="w-full rounded-2xl px-4 py-2.5 dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text shadow-subtle resize-none focus:outline-none focus:ring-2 focus:ring-claude-accent text-sm"
+                    rows={Math.max(2, editingContent.split('\n').length)}
+                  />
+                  <div className="flex items-center justify-end gap-2 mt-1.5">
+                    <button
+                      onClick={onEditCancel}
+                      className="px-3 py-1 text-xs rounded-lg dark:text-claude-darkTextSecondary text-claude-textSecondary dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-colors"
+                    >
+                      {i18nService.t('cancel')}
+                    </button>
+                    <button
+                      onClick={onEditSave}
+                      disabled={!editingContent.trim()}
+                      className="px-3 py-1 text-xs rounded-lg bg-claude-accent text-white hover:bg-claude-accent/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {i18nService.t('coworkEditMessageSend')}
+                    </button>
                   </div>
-                ))}
-                <CopyButton
-                  content={message.content}
-                  visible={isHovered}
-                />
-              </div>
+                </div>
+              ) : (
+                <>
+                  <div className="w-fit max-w-[42rem] rounded-2xl px-4 py-2.5 dark:bg-claude-darkSurface bg-claude-surface dark:text-claude-darkText text-claude-text shadow-subtle">
+                    <MarkdownContent
+                      content={message.content}
+                      className="max-w-none whitespace-pre-wrap break-words"
+                    />
+                  </div>
+                  <div className="flex items-center justify-end gap-1.5 mt-1">
+                    {messageSkills.map(skill => (
+                      <div
+                        key={skill.id}
+                        className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-claude-accent/5 dark:bg-claude-accent/10"
+                        title={skill.description}
+                      >
+                        <PuzzlePieceIcon className="h-2.5 w-2.5 text-claude-accent/70" />
+                        <span className="text-[10px] font-medium text-claude-accent/70 max-w-[60px] truncate">
+                          {skill.name}
+                        </span>
+                      </div>
+                    ))}
+                    {canEdit && (
+                      <button
+                        onClick={onEditStart}
+                        className={`p-1.5 rounded-md dark:hover:bg-claude-darkSurfaceHover hover:bg-claude-surfaceHover transition-all duration-200 ${
+                          isHovered ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                        }`}
+                        title={i18nService.t('coworkEditMessage')}
+                      >
+                        <PencilSquareIcon className="w-4 h-4 text-[var(--icon-secondary)]" />
+                      </button>
+                    )}
+                    <CopyButton
+                      content={message.content}
+                      visible={isHovered}
+                    />
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1150,6 +1223,10 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
   const [renameValue, setRenameValue] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
   const ignoreNextBlurRef = useRef(false);
+
+  // Edit message states
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingContent, setEditingContent] = useState('');
 
   // Reset rename value when session changes
   useEffect(() => {
@@ -1587,7 +1664,31 @@ const CoworkSessionDetail: React.FC<CoworkSessionDetailProps> = ({
         <React.Fragment key={turn.id}>
           {turn.userMessage && (
             <div data-export-role="user-message">
-              <UserMessageItem message={turn.userMessage} skills={skills} />
+              <UserMessageItem
+                message={turn.userMessage}
+                skills={skills}
+                canEdit={!isStreaming}
+                isEditing={editingMessageId === turn.userMessage.id}
+                editingContent={editingMessageId === turn.userMessage.id ? editingContent : ''}
+                onEditStart={() => {
+                  setEditingMessageId(turn.userMessage!.id);
+                  setEditingContent(turn.userMessage!.content);
+                }}
+                onEditChange={setEditingContent}
+                onEditSave={async () => {
+                  if (!currentSession || !editingMessageId || !editingContent.trim()) return;
+                  const msgId = editingMessageId;
+                  setEditingMessageId(null);
+                  await coworkService.editAndResend({
+                    sessionId: currentSession.id,
+                    messageId: msgId,
+                    newContent: editingContent.trim(),
+                    systemPrompt: currentSession.systemPrompt,
+                    activeSkillIds: currentSession.activeSkillIds,
+                  });
+                }}
+                onEditCancel={() => setEditingMessageId(null)}
+              />
             </div>
           )}
           {showAssistantBlock && (

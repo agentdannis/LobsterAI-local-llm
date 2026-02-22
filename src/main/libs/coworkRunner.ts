@@ -4602,22 +4602,67 @@ export class CoworkRunner extends EventEmitter {
     const session = this.store.getSession(sessionId);
     if (!session?.messages?.length) return '';
 
+    const messages = session.messages;
+    // 最近 5 个用户轮次保留完整内容；更早的内容摘要化
+    const RECENT_TURNS = 5;
+    let recentStartIdx = messages.length;
+    let turnCount = 0;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].type === 'user') {
+        turnCount++;
+        if (turnCount >= RECENT_TURNS) {
+          recentStartIdx = i;
+          break;
+        }
+      }
+    }
+
+    const olderParts: string[] = [];
+    const recentParts: string[] = [];
+
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      const isRecent = i >= recentStartIdx;
+      const target = isRecent ? recentParts : olderParts;
+
+      if (msg.type === 'user') {
+        const text = isRecent ? msg.content : msg.content.slice(0, 400);
+        target.push(`[用户]: ${text}`);
+      } else if (msg.type === 'assistant' && !msg.metadata?.isThinking) {
+        const text = isRecent ? msg.content : msg.content.slice(0, 600);
+        if (text.trim()) target.push(`[助手]: ${text}`);
+      } else if (msg.type === 'tool_use') {
+        const name = msg.metadata?.toolName ?? msg.content.slice(0, 60);
+        if (isRecent) {
+          const inputStr = msg.metadata?.toolInput
+            ? JSON.stringify(msg.metadata.toolInput).slice(0, 300)
+            : msg.content.slice(0, 200);
+          target.push(`[工具调用 ${name}]: ${inputStr}`);
+        } else {
+          target.push(`[工具调用]: ${name}`);
+        }
+      } else if (msg.type === 'tool_result') {
+        const limit = isRecent ? 800 : 200;
+        const result = msg.content.slice(0, limit).trim();
+        if (result) {
+          const suffix = msg.content.length > limit ? '...' : '';
+          target.push(`[工具结果]: ${result}${suffix}`);
+        }
+      }
+      // 跳过 system 消息和 thinking 消息
+    }
+
     const lines: string[] = [
       '<prior_context>',
       '以下是本次会话的关键摘要（上下文已自动压缩以释放 KV Cache）：\n',
     ];
 
-    for (const msg of session.messages) {
-      if (msg.type === 'user') {
-        lines.push(`[用户]: ${msg.content.slice(0, 600)}`);
-      } else if (msg.type === 'assistant' && !msg.metadata?.isThinking) {
-        // 只保留助手的文字回复，截断以控制总长度
-        const snippet = msg.content.slice(0, 1200);
-        if (snippet.trim()) lines.push(`[助手]: ${snippet}`);
-      }
-      // 跳过 tool_use / tool_result —— 这正是占用大量上下文的部分
+    if (olderParts.length > 0) {
+      lines.push('=== 早期对话摘要 ===');
+      lines.push(...olderParts);
+      lines.push('\n=== 最近对话（完整）===');
     }
-
+    lines.push(...recentParts);
     lines.push('</prior_context>\n');
     return lines.join('\n');
   }

@@ -666,11 +666,17 @@ function extractMaxTokensRange(errorMessage: string): { min: number; max: number
   }
 
   const normalized = errorMessage.toLowerCase();
-  if (!normalized.includes('max_tokens')) {
+  const isTokenRelated =
+    normalized.includes('max_tokens') ||
+    normalized.includes('max_completion_tokens') ||
+    normalized.includes('max_output_tokens') ||
+    normalized.includes('context length');
+  if (!isTokenRelated) {
     return null;
   }
 
-  const bracketMatch = /max_tokens[^\[]*\[\s*(\d+)\s*,\s*(\d+)\s*\]/i.exec(errorMessage);
+  // Bracket format: max_tokens [min, max] or max_completion_tokens [min, max]
+  const bracketMatch = /(?:max_tokens|max_completion_tokens)[^\[]*\[\s*(\d+)\s*,\s*(\d+)\s*\]/i.exec(errorMessage);
   if (bracketMatch) {
     return {
       min: Number(bracketMatch[1]),
@@ -678,12 +684,24 @@ function extractMaxTokensRange(errorMessage: string): { min: number; max: number
     };
   }
 
-  const betweenMatch = /max_tokens.*between\s+(\d+)\s*(?:and|-)\s*(\d+)/i.exec(errorMessage);
+  // Between format: max_tokens ... between X and Y
+  const betweenMatch = /(?:max_tokens|max_completion_tokens).*between\s+(\d+)\s*(?:and|-)\s*(\d+)/i.exec(errorMessage);
   if (betweenMatch) {
     return {
       min: Number(betweenMatch[1]),
       max: Number(betweenMatch[2]),
     };
+  }
+
+  // vLLM format: "maximum context length is 65536 tokens and your request has 39514 input tokens"
+  const vllmMatch = /maximum context length is (\d+) tokens and your request has (\d+) input tokens/i.exec(errorMessage);
+  if (vllmMatch) {
+    const contextLength = Number(vllmMatch[1]);
+    const inputTokens = Number(vllmMatch[2]);
+    const available = contextLength - inputTokens;
+    if (available > 0) {
+      return { min: 1, max: available };
+    }
   }
 
   return null;
@@ -693,11 +711,6 @@ function clampMaxTokensFromError(
   openAIRequest: Record<string, unknown>,
   errorMessage: string
 ): { changed: boolean; clampedTo?: number } {
-  const currentMaxTokens = openAIRequest.max_tokens;
-  if (typeof currentMaxTokens !== 'number' || !Number.isFinite(currentMaxTokens)) {
-    return { changed: false };
-  }
-
   const range = extractMaxTokensRange(errorMessage);
   if (!range) {
     return { changed: false };
@@ -705,14 +718,54 @@ function clampMaxTokensFromError(
 
   const normalizedMin = Math.max(1, Math.floor(range.min));
   const normalizedMax = Math.max(normalizedMin, Math.floor(range.max));
-  const nextValue = Math.min(Math.max(Math.floor(currentMaxTokens), normalizedMin), normalizedMax);
 
-  if (nextValue === currentMaxTokens) {
-    return { changed: false };
+  // Check both max_tokens and max_completion_tokens (provider may use either field)
+  let changed = false;
+  let clampedTo: number | undefined;
+  for (const field of ['max_tokens', 'max_completion_tokens'] as const) {
+    const current = openAIRequest[field];
+    if (typeof current !== 'number' || !Number.isFinite(current)) {
+      continue;
+    }
+    const next = Math.min(Math.max(Math.floor(current), normalizedMin), normalizedMax);
+    if (next !== current) {
+      openAIRequest[field] = next;
+      changed = true;
+      clampedTo = next;
+    }
   }
 
-  openAIRequest.max_tokens = nextValue;
-  return { changed: true, clampedTo: nextValue };
+  return changed ? { changed: true, clampedTo } : { changed: false };
+}
+
+function isContextLengthError(errorMessage: string): boolean {
+  if (!errorMessage) return false;
+  const n = errorMessage.toLowerCase();
+  return (
+    n.includes('context_length_exceeded') ||
+    n.includes('prompt is too long') ||
+    n.includes('input is too long') ||
+    (n.includes('context length') && n.includes('token')) ||
+    (n.includes('maximum context') && n.includes('token')) ||
+    (
+      (n.includes('max_tokens') || n.includes('max_completion_tokens') || n.includes('max_output_tokens')) &&
+      (n.includes('too large') || n.includes('exceed') || n.includes('too long'))
+    )
+  );
+}
+
+function halveMaxTokens(openAIRequest: Record<string, unknown>): { changed: boolean; halvedTo?: number } {
+  for (const field of ['max_tokens', 'max_completion_tokens'] as const) {
+    const val = openAIRequest[field];
+    if (typeof val === 'number' && Number.isFinite(val) && val > 1) {
+      const halved = Math.max(1, Math.floor(val / 2));
+      if (halved < val) {
+        openAIRequest[field] = halved;
+        return { changed: true, halvedTo: halved };
+      }
+    }
+  }
+  return { changed: false };
 }
 
 function shouldUseMaxCompletionTokensForModel(model: unknown): boolean {
@@ -2256,8 +2309,9 @@ async function handleRequest(
         firstErrorMessage = `Upstream API request failed (${upstreamResponse.status}) ${currentTargetURL}`;
       }
 
-      if (upstreamAPIType === 'chat_completions' && upstreamResponse.status === 400) {
-        if (isMaxTokensUnsupportedError(firstErrorMessage)) {
+      if (upstreamAPIType === 'chat_completions') {
+        // Step 1: "max_tokens not supported, use max_completion_tokens" — only for HTTP 400
+        if (upstreamResponse.status === 400 && isMaxTokensUnsupportedError(firstErrorMessage)) {
           const convertResult = convertMaxTokensToMaxCompletionTokens(upstreamRequest);
           if (convertResult.changed) {
             try {
@@ -2280,8 +2334,7 @@ async function handleRequest(
           }
         }
 
-        // Some OpenAI-compatible providers (e.g. DeepSeek) enforce strict max_tokens ranges.
-        // Retry once with a clamped value when the upstream response includes the allowed range.
+        // Step 2: Clamp to provider-specified range (handles any error status, both max_tokens and max_completion_tokens)
         if (!upstreamResponse.ok) {
           const clampResult = clampMaxTokensFromError(upstreamRequest, firstErrorMessage);
           if (clampResult.changed) {
@@ -2292,7 +2345,7 @@ async function handleRequest(
                 firstErrorMessage = extractErrorMessage(retryErrorText);
               } else {
                 console.info(
-                  `[cowork-openai-compat-proxy] Retried request with clamped max_tokens=${clampResult.clampedTo}`
+                  `[cowork-openai-compat-proxy] Retried request with clamped tokens=${clampResult.clampedTo}`
                 );
               }
             } catch (error) {
@@ -2300,6 +2353,27 @@ async function handleRequest(
               lastProxyError = message;
               writeJSON(res, 502, createAnthropicErrorBody(message));
               return;
+            }
+          } else if (isContextLengthError(firstErrorMessage)) {
+            // Step 3: Fallback — halve max tokens when error format is unrecognized
+            const halveResult = halveMaxTokens(upstreamRequest);
+            if (halveResult.changed) {
+              try {
+                upstreamResponse = await sendUpstreamRequest(upstreamRequest, currentTargetURL);
+                if (!upstreamResponse.ok) {
+                  const retryErrorText = await upstreamResponse.text();
+                  firstErrorMessage = extractErrorMessage(retryErrorText);
+                } else {
+                  console.info(
+                    `[cowork-openai-compat-proxy] Retried request with halved tokens=${halveResult.halvedTo}`
+                  );
+                }
+              } catch (error) {
+                const message = error instanceof Error ? error.message : 'Network error';
+                lastProxyError = message;
+                writeJSON(res, 502, createAnthropicErrorBody(message));
+                return;
+              }
             }
           }
         }

@@ -170,6 +170,14 @@ const coworkSlice = createSlice({
       markSessionUnread(state, sessionId);
     },
 
+    truncateMessagesAfter(state, action: PayloadAction<{ sessionId: string; messageId: string }>) {
+      if (state.currentSession?.id !== action.payload.sessionId) return;
+      const idx = state.currentSession.messages.findIndex(m => m.id === action.payload.messageId);
+      if (idx !== -1) {
+        state.currentSession.messages = state.currentSession.messages.slice(0, idx + 1);
+      }
+    },
+
     updateMessageContent(state, action: PayloadAction<{ sessionId: string; messageId: string; content: string }>) {
       const { sessionId, messageId, content } = action.payload;
 
@@ -260,6 +268,7 @@ export const {
   updateSessionStatus,
   deleteSession,
   addMessage,
+  truncateMessagesAfter,
   updateMessageContent,
   setStreaming,
   updateSessionPinned,

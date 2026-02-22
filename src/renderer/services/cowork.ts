@@ -6,6 +6,7 @@ import {
   updateSessionStatus,
   deleteSession as deleteSessionAction,
   addMessage,
+  truncateMessagesAfter,
   updateMessageContent,
   setStreaming,
   updateSessionPinned,
@@ -167,6 +168,35 @@ class CoworkService {
       store.dispatch(setStreaming(false));
       store.dispatch(updateSessionStatus({ sessionId: options.sessionId, status: 'error' }));
       console.error('Failed to continue session:', result.error);
+      return false;
+    }
+
+    return true;
+  }
+
+  async editAndResend(options: {
+    sessionId: string;
+    messageId: string;
+    newContent: string;
+    systemPrompt?: string;
+    activeSkillIds?: string[];
+  }): Promise<boolean> {
+    const cowork = window.electron?.cowork;
+    if (!cowork?.editMessage) {
+      console.error('Cowork editMessage API not available');
+      return false;
+    }
+
+    store.dispatch(truncateMessagesAfter({ sessionId: options.sessionId, messageId: options.messageId }));
+    store.dispatch(updateMessageContent({ sessionId: options.sessionId, messageId: options.messageId, content: options.newContent }));
+    store.dispatch(setStreaming(true));
+    store.dispatch(updateSessionStatus({ sessionId: options.sessionId, status: 'running' }));
+
+    const result = await cowork.editMessage(options);
+    if (!result.success) {
+      store.dispatch(setStreaming(false));
+      store.dispatch(updateSessionStatus({ sessionId: options.sessionId, status: 'error' }));
+      console.error('Failed to edit message:', result.error);
       return false;
     }
 

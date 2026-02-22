@@ -114,6 +114,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:start', options),
     continueSession: (options: { sessionId: string; prompt: string; systemPrompt?: string; activeSkillIds?: string[] }) =>
       ipcRenderer.invoke('cowork:session:continue', options),
+    editMessage: (options: { sessionId: string; messageId: string; newContent: string; systemPrompt?: string; activeSkillIds?: string[] }) =>
+      ipcRenderer.invoke('cowork:session:editMessage', options),
     stopSession: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:stop', sessionId),
     deleteSession: (sessionId: string) =>

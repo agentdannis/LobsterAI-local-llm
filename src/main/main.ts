@@ -1062,6 +1062,34 @@ if (!gotTheLock) {
     }
   });
 
+  ipcMain.handle('cowork:session:editMessage', async (_event, options: {
+    sessionId: string;
+    messageId: string;
+    newContent: string;
+    systemPrompt?: string;
+    activeSkillIds?: string[];
+  }) => {
+    try {
+      const coworkStoreInstance = getCoworkStore();
+      coworkStoreInstance.deleteMessagesAfter(options.sessionId, options.messageId);
+      coworkStoreInstance.updateMessage(options.sessionId, options.messageId, { content: options.newContent });
+      coworkStoreInstance.resetClaudeSessionId(options.sessionId);
+      const runner = getCoworkRunner();
+      runner.continueSession(options.sessionId, options.newContent, {
+        systemPrompt: options.systemPrompt,
+        skillIds: options.activeSkillIds,
+      }).catch(error => {
+        console.error('Cowork editMessage continue error:', error);
+      });
+      return { success: true };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to edit message',
+      };
+    }
+  });
+
   ipcMain.handle('cowork:session:continue', async (_event, options: {
     sessionId: string;
     prompt: string;

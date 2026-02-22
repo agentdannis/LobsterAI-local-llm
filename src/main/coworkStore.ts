@@ -796,6 +796,28 @@ export class CoworkStore {
     this.saveDb();
   }
 
+  deleteMessagesAfter(sessionId: string, messageId: string): void {
+    const row = this.getOne<{ sequence: number | null; created_at: number }>(
+      'SELECT sequence, created_at FROM cowork_messages WHERE id = ? AND session_id = ?',
+      [messageId, sessionId]
+    );
+    if (!row) return;
+    const pivot = row.sequence ?? row.created_at;
+    this.db.run(
+      'DELETE FROM cowork_messages WHERE session_id = ? AND COALESCE(sequence, created_at) > ?',
+      [sessionId, pivot]
+    );
+    this.saveDb();
+  }
+
+  resetClaudeSessionId(sessionId: string): void {
+    this.db.run(
+      'UPDATE cowork_sessions SET claude_session_id = NULL WHERE id = ?',
+      [sessionId]
+    );
+    this.saveDb();
+  }
+
   // Config operations
   getConfig(): CoworkConfig {
     interface ConfigRow {
