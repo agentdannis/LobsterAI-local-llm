@@ -1815,8 +1815,15 @@ export class CoworkRunner extends EventEmitter {
         '- Never write transient conversation facts, news content, or source citations into user memory unless the user explicitly asks.'
       );
     }
+    const webSearchPrompt = [
+      '## Web Search Strategy',
+      '- Use `web_search` when the user asks about current events, recent news, real-time data, or facts that may have changed.',
+      '- Use `web_fetch` to read the full content of a specific URL.',
+      '- After searching, synthesize the results into a clear answer with source citations.',
+      '- Do not search for things you already know with confidence; only search when the query requires fresh or external information.',
+    ].join('\n');
     const trimmedBasePrompt = baseSystemPrompt?.trim();
-    return [safetyPrompt, localTimePrompt, userMemoriesXml, memoryRecallPrompt.join('\n'), trimmedBasePrompt]
+    return [safetyPrompt, localTimePrompt, userMemoriesXml, memoryRecallPrompt.join('\n'), webSearchPrompt, trimmedBasePrompt]
       .filter((section): section is string => Boolean(section?.trim()))
       .join('\n\n');
   }
@@ -2617,6 +2624,79 @@ export class CoworkRunner extends EventEmitter {
           )
         );
       }
+      // Web search tools (Jina AI, no API key required)
+      memoryTools.push(
+        tool(
+          'web_search',
+          'Search the web for current information. Returns titles, URLs and content for top results.',
+          {
+            query: z.string().min(1),
+            max_results: z.number().int().min(1).max(8).optional(),
+          },
+          async (args: { query: string; max_results?: number }) => {
+            try {
+              const encoded = encodeURIComponent(args.query);
+              const response = await fetch(`https://s.jina.ai/${encoded}`, {
+                headers: {
+                  'Accept': 'text/markdown',
+                  'X-Return-Format': 'markdown',
+                  'X-No-Cache': 'true',
+                },
+                signal: AbortSignal.timeout(30000),
+              });
+              if (!response.ok) {
+                return {
+                  content: [{ type: 'text', text: `Web search failed: HTTP ${response.status}` }],
+                  isError: true,
+                } as any;
+              }
+              let text = await response.text();
+              if (text.length > 12000) text = text.slice(0, 12000) + '\n...(truncated)';
+              return { content: [{ type: 'text', text }] } as any;
+            } catch (error) {
+              return {
+                content: [{ type: 'text', text: `Web search error: ${error instanceof Error ? error.message : String(error)}` }],
+                isError: true,
+              } as any;
+            }
+          }
+        ),
+        tool(
+          'web_fetch',
+          'Fetch and read the full content of a web page as clean markdown text.',
+          {
+            url: z.string().min(1),
+          },
+          async (args: { url: string }) => {
+            try {
+              const encoded = encodeURIComponent(args.url);
+              const response = await fetch(`https://r.jina.ai/${encoded}`, {
+                headers: {
+                  'Accept': 'text/markdown',
+                  'X-Return-Format': 'markdown',
+                  'X-Retain-Images': 'none',
+                },
+                signal: AbortSignal.timeout(30000),
+              });
+              if (!response.ok) {
+                return {
+                  content: [{ type: 'text', text: `Web fetch failed: HTTP ${response.status}` }],
+                  isError: true,
+                } as any;
+              }
+              let text = await response.text();
+              if (text.length > 20000) text = text.slice(0, 20000) + '\n...(truncated)';
+              return { content: [{ type: 'text', text }] } as any;
+            } catch (error) {
+              return {
+                content: [{ type: 'text', text: `Web fetch error: ${error instanceof Error ? error.message : String(error)}` }],
+                isError: true,
+              } as any;
+            }
+          }
+        )
+      );
+
       options.mcpServers = {
         ...(options.mcpServers as Record<string, unknown> | undefined),
         [memoryServerName]: createSdkMcpServer({

@@ -2146,9 +2146,6 @@ if (!gotTheLock) {
       };
 
       tryLoadURL();
-      
-      // 打开开发者工具
-      mainWindow.webContents.openDevTools();
     } else {
       // 生产环境
       mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
