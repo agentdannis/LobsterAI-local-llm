@@ -2653,26 +2653,57 @@ export class CoworkRunner extends EventEmitter {
             max_results: z.number().int().min(1).max(8).optional(),
           },
           async (args: { query: string; max_results?: number }) => {
+            const maxResults = args.max_results ?? 6;
             try {
-              const encoded = encodeURIComponent(args.query);
-              // With API key: use Jina Search (better quality)
-              // Without API key: use DuckDuckGo via Jina Reader (free, no key needed)
-              const searchUrl = config.jinaApiKey
-                ? `https://s.jina.ai/${encoded}`
-                : `https://r.jina.ai/https://html.duckduckgo.com/html/?q=${encoded}`;
-              const response = await fetch(searchUrl, {
-                headers: jinaHeaders,
-                signal: AbortSignal.timeout(30000),
-              });
-              if (!response.ok) {
-                return {
-                  content: [{ type: 'text', text: `Web search failed: HTTP ${response.status}` }],
-                  isError: true,
-                } as any;
+              if (config.jinaApiKey) {
+                // With API key: use Jina Search
+                const encoded = encodeURIComponent(args.query);
+                const response = await fetch(`https://s.jina.ai/${encoded}`, {
+                  headers: jinaHeaders,
+                  signal: AbortSignal.timeout(30000),
+                });
+                if (!response.ok) {
+                  return { content: [{ type: 'text', text: `Jina search failed: HTTP ${response.status}` }], isError: true } as any;
+                }
+                let text = await response.text();
+                if (text.length > 6000) text = text.slice(0, 6000) + '\n...(truncated)';
+                return { content: [{ type: 'text', text }] } as any;
+              } else {
+                // Without key: call DuckDuckGo directly, parse HTML
+                const encoded = encodeURIComponent(args.query);
+                const response = await fetch(`https://html.duckduckgo.com/html/?q=${encoded}`, {
+                  headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', 'Accept': 'text/html' },
+                  signal: AbortSignal.timeout(15000),
+                });
+                if (!response.ok) {
+                  return { content: [{ type: 'text', text: `DuckDuckGo search failed: HTTP ${response.status}` }], isError: true } as any;
+                }
+                const html = await response.text();
+                const results: string[] = [`# Search Results: ${args.query}\n`];
+                const titleRe = /<a\s+[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
+                const snippetRe = /<a\s+[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+                const titles: Array<{ url: string; title: string }> = [];
+                let m: RegExpExecArray | null;
+                while ((m = titleRe.exec(html)) !== null && titles.length < maxResults) {
+                  let url = m[1];
+                  const title = m[2].replace(/<[^>]+>/g, '').trim();
+                  const uddg = url.match(/[?&]uddg=([^&]+)/);
+                  if (uddg) url = decodeURIComponent(uddg[1]);
+                  if (url && title) titles.push({ url, title });
+                }
+                const snippets: string[] = [];
+                while ((m = snippetRe.exec(html)) !== null) {
+                  snippets.push(m[1].replace(/<[^>]+>/g, '').trim());
+                }
+                titles.forEach(({ url, title }, i) => {
+                  results.push(`## ${title}`);
+                  results.push(`URL: ${url}`);
+                  if (snippets[i]) results.push(snippets[i]);
+                  results.push('');
+                });
+                const text = results.join('\n') || 'No results found.';
+                return { content: [{ type: 'text', text }] } as any;
               }
-              let text = await response.text();
-              if (text.length > 12000) text = text.slice(0, 12000) + '\n...(truncated)';
-              return { content: [{ type: 'text', text }] } as any;
             } catch (error) {
               return {
                 content: [{ type: 'text', text: `Web search error: ${error instanceof Error ? error.message : String(error)}` }],
@@ -2702,7 +2733,7 @@ export class CoworkRunner extends EventEmitter {
                 } as any;
               }
               let text = await response.text();
-              if (text.length > 20000) text = text.slice(0, 20000) + '\n...(truncated)';
+              if (text.length > 8000) text = text.slice(0, 8000) + '\n...(truncated)';
               return { content: [{ type: 'text', text }] } as any;
             } catch (error) {
               return {
