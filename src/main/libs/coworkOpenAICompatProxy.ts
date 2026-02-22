@@ -819,6 +819,115 @@ function convertMaxTokensToMaxCompletionTokens(
   return { changed: true, convertedTo: maxTokens };
 }
 
+// ─── Unified pre-compression gate ────────────────────────────────────────────
+// Triggered before every upstream request. Segments are compressed in parallel.
+
+const PRECOMPRESS_CHAR_THRESHOLD = 150000; // ~37k tokens (conservative for Chinese)
+const SEGMENT_MIN_CHARS = 1500;            // Only compress segments larger than this
+const KEEP_RECENT_MESSAGES = 6;           // Keep last 3 user-assistant pairs intact
+
+function getMessageTextContent(msg: Record<string, unknown>): string | null {
+  const content = msg.content;
+  if (typeof content === 'string') return content.length > 0 ? content : null;
+  if (Array.isArray(content)) {
+    const text = (content as Array<Record<string, unknown>>)
+      .filter(item => item.type === 'text')
+      .map(item => String(item.text || ''))
+      .join('\n');
+    return text.length > 0 ? text : null;
+  }
+  return null;
+}
+
+function setMessageTextContent(msg: Record<string, unknown>, compressed: string): void {
+  const content = msg.content;
+  const prefixed = `[摘要] ${compressed}`;
+  if (typeof content === 'string') {
+    msg.content = prefixed;
+  } else if (Array.isArray(content)) {
+    const nonText = (content as Array<Record<string, unknown>>).filter(item => item.type !== 'text');
+    msg.content = [{ type: 'text', text: prefixed }, ...nonText];
+  }
+}
+
+function estimateTotalChars(messages: Array<Record<string, unknown>>): number {
+  return messages.reduce((sum, msg) => sum + (getMessageTextContent(msg)?.length ?? 0), 0);
+}
+
+async function compressSegment(
+  text: string,
+  baseURL: string,
+  apiKey: string | undefined,
+  model: string
+): Promise<string | null> {
+  try {
+    const base = baseURL.replace(/\/$/, '');
+    const endpoint = base.endsWith('/v1') ? `${base}/chat/completions` : `${base}/v1/chat/completions`;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    const prompt = `请将以下内容压缩为300字以内的摘要，保留关键事实、数据和结论，去掉冗余描述：\n\n${text.slice(0, 30000)}`;
+    const response = await session.defaultSession.fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ model, max_tokens: 512, messages: [{ role: 'user', content: prompt }] }),
+    });
+    if (!response.ok) return null;
+    const json = await response.json() as Record<string, unknown>;
+    const choices = json.choices as Array<Record<string, unknown>> | undefined;
+    const message = choices?.[0]?.message as Record<string, unknown> | undefined;
+    return typeof message?.content === 'string' ? message.content : null;
+  } catch {
+    return null;
+  }
+}
+
+async function compressMessagesIfNeeded(
+  openAIRequest: Record<string, unknown>,
+  baseURL: string,
+  apiKey: string | undefined,
+  model: string
+): Promise<void> {
+  const messages = toArray(openAIRequest.messages) as Array<Record<string, unknown>>;
+  if (estimateTotalChars(messages) <= PRECOMPRESS_CHAR_THRESHOLD) return;
+
+  const systemMsgs = messages.filter(m => m.role === 'system');
+  const nonSystem = messages.filter(m => m.role !== 'system');
+  const recentMsgs = nonSystem.slice(-KEEP_RECENT_MESSAGES);
+  const oldMsgs = nonSystem.slice(0, -KEEP_RECENT_MESSAGES);
+
+  // Collect compressible segments (old messages with large content)
+  const targets = oldMsgs
+    .map((msg, idx) => ({ msg, idx, chars: getMessageTextContent(msg)?.length ?? 0 }))
+    .filter(t => t.chars >= SEGMENT_MIN_CHARS)
+    .sort((a, b) => b.chars - a.chars);
+
+  if (targets.length === 0) return;
+
+  // Compress all targets in parallel
+  const results = await Promise.all(
+    targets.map(async ({ msg, idx, chars }) => {
+      const text = getMessageTextContent(msg)!;
+      const compressed = await compressSegment(text, baseURL, apiKey, model);
+      return { idx, compressed, originalChars: chars };
+    })
+  );
+
+  let compressedCount = 0;
+  for (const { idx, compressed, originalChars } of results) {
+    if (compressed) {
+      setMessageTextContent(oldMsgs[idx], compressed);
+      compressedCount++;
+      console.info(
+        `[cowork-openai-compat-proxy] Compressed segment[${idx}]: ${originalChars} → ${compressed.length} chars`
+      );
+    }
+  }
+
+  openAIRequest.messages = [...systemMsgs, ...oldMsgs, ...recentMsgs];
+  console.info(`[cowork-openai-compat-proxy] Pre-compression: ${compressedCount}/${targets.length} segments compressed`);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function writeJSON(
   res: http.ServerResponse,
   statusCode: number,
@@ -2242,6 +2351,16 @@ async function handleRequest(
   }
   filterOpenAIToolsForProvider(openAIRequest, upstreamConfig.provider);
   hydrateOpenAIRequestToolCalls(openAIRequest, upstreamConfig.provider, upstreamConfig.baseURL);
+
+  // Unified pre-compression gate: runs before every upstream request
+  if (Array.isArray(openAIRequest.messages)) {
+    await compressMessagesIfNeeded(
+      openAIRequest,
+      upstreamConfig.baseURL,
+      upstreamConfig.apiKey,
+      String(openAIRequest.model || upstreamConfig.model)
+    );
+  }
 
   if (upstreamAPIType === 'chat_completions') {
     normalizeMaxTokensFieldForOpenAIProvider(openAIRequest, upstreamConfig.provider);
