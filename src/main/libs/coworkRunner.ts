@@ -9,6 +9,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { CoworkStore, CoworkMessage, CoworkExecutionMode } from '../coworkStore';
 import { getClaudeCodePath, getCurrentApiConfig } from './claudeSettings';
+import type { CoworkApiConfig } from './coworkConfigStore';
 import { loadClaudeSdk } from './claudeSdk';
 import { getEnhancedEnv, getEnhancedEnvWithTmpdir, getSkillsRoot } from './coworkUtil';
 import { coworkLog, getCoworkLogPath } from './coworkLogger';
@@ -374,6 +375,38 @@ type SandboxSkillEntry = {
   guestPath: string;
   mountTag: string;
 };
+
+async function compressWithLlm(content: string, apiConfig: CoworkApiConfig, pageUrl: string): Promise<string | null> {
+  try {
+    const prompt = `Extract and summarize the key information from this web page content. Be concise and factual. Focus on the main topic, key data points, and important details. Keep the summary under 1500 words.\n\nURL: ${pageUrl}\n\n---\n\n${content.slice(0, 40000)}`;
+    const base = apiConfig.baseURL.replace(/\/$/, '');
+
+    if (apiConfig.apiType === 'anthropic') {
+      const response = await fetch(`${base}/v1/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiConfig.apiKey, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: apiConfig.model, max_tokens: 1024, messages: [{ role: 'user', content: prompt }] }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!response.ok) return null;
+      const json = await response.json() as any;
+      return json.content?.[0]?.text ?? null;
+    } else {
+      const endpoint = base.endsWith('/v1') ? `${base}/chat/completions` : `${base}/v1/chat/completions`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(apiConfig.apiKey ? { 'Authorization': `Bearer ${apiConfig.apiKey}` } : {}) },
+        body: JSON.stringify({ model: apiConfig.model, max_tokens: 1024, messages: [{ role: 'user', content: prompt }] }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!response.ok) return null;
+      const json = await response.json() as any;
+      return json.choices?.[0]?.message?.content ?? null;
+    }
+  } catch {
+    return null;
+  }
+}
 
 export class CoworkRunner extends EventEmitter {
   private store: CoworkStore;
@@ -2733,7 +2766,11 @@ export class CoworkRunner extends EventEmitter {
                 } as any;
               }
               let text = await response.text();
-              if (text.length > 8000) text = text.slice(0, 8000) + '\n...(truncated)';
+              if (text.length > 8000) {
+                const apiConfig = getCurrentApiConfig('local');
+                const compressed = apiConfig ? await compressWithLlm(text, apiConfig, args.url) : null;
+                text = compressed ?? (text.slice(0, 8000) + '\n...(truncated)');
+              }
               return { content: [{ type: 'text', text }] } as any;
             } catch (error) {
               return {
