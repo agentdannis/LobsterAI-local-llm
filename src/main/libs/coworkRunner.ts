@@ -2647,7 +2647,12 @@ export class CoworkRunner extends EventEmitter {
           async (args: { query: string; max_results?: number }) => {
             try {
               const encoded = encodeURIComponent(args.query);
-              const response = await fetch(`https://s.jina.ai/${encoded}`, {
+              // With API key: use Jina Search (better quality)
+              // Without API key: use DuckDuckGo via Jina Reader (free, no key needed)
+              const searchUrl = config.jinaApiKey
+                ? `https://s.jina.ai/${encoded}`
+                : `https://r.jina.ai/https://html.duckduckgo.com/html/?q=${encoded}`;
+              const response = await fetch(searchUrl, {
                 headers: jinaHeaders,
                 signal: AbortSignal.timeout(30000),
               });
