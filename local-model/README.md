@@ -6,16 +6,15 @@
 
 ```
 LobsterAI (Electron)
-    │  OpenAI 兼容格式
-    ▼
-fix_proxy.py (port 4000)   ← 可选：工具调用格式转换代理
-    │  或直连
+    │  OpenAI 兼容格式（直连）
     ▼
 vLLM Docker (port 8000)
     │
     ▼
 Qwen3-Next-80B-A3B-Instruct-NVFP4  (/models/)
 ```
+
+工具调用格式已通过 vLLM 启动参数 `--tool-call-parser hermes` 原生解决，无需额外代理。
 
 ## 快速启动
 
@@ -32,45 +31,29 @@ bash ../scripts/start_vllm.sh
 | `--max-model-len` | 65536 | 65K token 上下文，保证长对话连贯 |
 | `--gpu-memory-utilization` | 0.75 | GB10 统一内存留 ~30GB 给 OS |
 | `--max-num-seqs` | 4 | 限制并发，防 KV Cache 叠加溢出 |
+| `--tool-call-parser` | hermes | 原生 OpenAI 兼容工具调用格式 |
 | `--enable-prefix-caching` | 开启 | 相同前缀复用 KV Cache |
 
 等待日志出现 `Application startup complete` 后继续。
 
-### 步骤 2（可选）：启动工具调用代理
-
-如果 vLLM 的 tool_call 格式与 LobsterAI 不兼容，启动 fix_proxy.py：
-
-```bash
-cd local-model
-pip install fastapi uvicorn httpx
-python fix_proxy.py   # 监听 port 4000，转发到 vLLM port 8000
-```
-
-然后 LobsterAI 的 baseUrl 改为 `http://localhost:4000`。
-
-### 步骤 3：验证工具调用格式
-
-```bash
-python verify_openai_format.py
-```
-
-输出 `✅ 格式正确` 即可。
-
-### 步骤 4：配置 LobsterAI
+### 步骤 2：配置 LobsterAI
 
 Settings → Model → 选择 **vLLM** provider：
-- Base URL：`http://localhost:8000`（直连）或 `http://localhost:4000`（经代理）
+- Base URL：`http://localhost:8000`
 - API Key：留空
 - Model：`/models/Qwen3-Next-80B-A3B-Instruct-NVFP4`
+
+### 步骤 3：启动 LobsterAI
+
+```bash
+npm run electron:dev
+```
 
 ## 文件说明
 
 | 文件 | 说明 |
 |------|------|
 | `../scripts/start_vllm.sh` | vLLM Docker 启动脚本（优化参数） |
-| `fix_proxy.py` | 工具调用格式转换代理（port 4000 → 8000） |
-| `config.yaml` | LiteLLM 代理配置（备用方案） |
-| `verify_openai_format.py` | 验证工具调用是否格式正确 |
 
 ## 内存估算（GB10, 128GB 统一内存）
 

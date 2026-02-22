@@ -41,7 +41,7 @@ docker run -d \
     --dtype bfloat16 \
     --kv-cache-dtype fp8 \
     --enable-auto-tool-choice \
-    --tool-call-parser qwen3_coder \
+    --tool-call-parser hermes \
     --chat-template-content-format auto \
     --enable-prefix-caching \
     --trust-remote-code
