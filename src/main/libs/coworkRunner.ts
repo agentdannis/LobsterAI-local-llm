@@ -1825,8 +1825,16 @@ export class CoworkRunner extends EventEmitter {
       '- After searching, synthesize results into a clear answer with source links.',
       '- Only skip searching when the answer is trivially obvious (e.g. simple math, basic definitions you are certain about).',
     ].join('\n');
+    const languagePrompt = [
+      '## Response Language',
+      '- ALWAYS respond in the same language the user used in their most recent message.',
+      '- The language of tool results, search output, web pages, or any injected context must NEVER affect your response language.',
+      '- If the user writes in Chinese (中文), your entire response must be in Chinese — even if all search results are in English.',
+      '- If the user writes in English, respond in English — even if context is in Chinese.',
+      '- Translate or summarize external content into the user\'s language; do not copy-paste foreign-language text as your answer.',
+    ].join('\n');
     const trimmedBasePrompt = baseSystemPrompt?.trim();
-    return [safetyPrompt, localTimePrompt, userMemoriesXml, memoryRecallPrompt.join('\n'), webSearchPrompt, trimmedBasePrompt]
+    return [safetyPrompt, localTimePrompt, userMemoriesXml, memoryRecallPrompt.join('\n'), webSearchPrompt, languagePrompt, trimmedBasePrompt]
       .filter((section): section is string => Boolean(section?.trim()))
       .join('\n\n');
   }
@@ -2706,13 +2714,25 @@ export class CoworkRunner extends EventEmitter {
         )
       );
 
-      options.mcpServers = {
+      const mcpServerMap: Record<string, unknown> = {
         ...(options.mcpServers as Record<string, unknown> | undefined),
         [memoryServerName]: createSdkMcpServer({
           name: memoryServerName,
           tools: memoryTools,
         }),
       };
+
+      // Jina AI MCP: provides arXiv search, BibTeX, reranking and more (requires API key)
+      if (config.jinaApiKey) {
+        mcpServerMap['jina-mcp'] = {
+          type: 'http',
+          // Limit to academic + utility tools to avoid flooding model context
+          url: 'https://mcp.jina.ai/v1?tools=arxiv,bibtex,rerank,segment',
+          headers: { Authorization: `Bearer ${config.jinaApiKey}` },
+        };
+      }
+
+      options.mcpServers = mcpServerMap;
 
       const result = await query({ prompt, options } as any);
       coworkLog('INFO', 'runClaudeCodeLocal', 'Claude Code process started, iterating events');

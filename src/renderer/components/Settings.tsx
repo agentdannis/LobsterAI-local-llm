@@ -8,7 +8,7 @@ import { coworkService } from '../services/cowork';
 import { imService } from '../services/im';
 import { APP_ID, EXPORT_FORMAT_TYPE, EXPORT_PASSWORD } from '../constants/app';
 import ErrorMessage from './ErrorMessage';
-import { XMarkIcon, Cog6ToothIcon, PlusCircleIcon, TrashIcon, PencilIcon, SignalIcon, CheckCircleIcon, XCircleIcon, CubeIcon, ChatBubbleLeftIcon, ShieldCheckIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
+import { XMarkIcon, Cog6ToothIcon, PlusCircleIcon, TrashIcon, PencilIcon, SignalIcon, CheckCircleIcon, XCircleIcon, CubeIcon, ChatBubbleLeftIcon, ShieldCheckIcon, EnvelopeIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
 import BrainIcon from './icons/BrainIcon';
 import { useDispatch, useSelector } from 'react-redux';
 import { setAvailableModels } from '../store/slices/modelSlice';
@@ -25,7 +25,7 @@ import IMSettings from './im/IMSettings';
 import EmailSkillConfig from './skills/EmailSkillConfig';
 import { defaultConfig, type AppConfig, getVisibleProviders } from '../config';
 
-type TabType = 'general' | 'model' | 'coworkSandbox' | 'coworkMemory' | 'shortcuts' | 'im' | 'email';
+type TabType = 'general' | 'model' | 'webSearch' | 'coworkSandbox' | 'coworkMemory' | 'shortcuts' | 'im' | 'email';
 
 export type SettingsOpenOptions = {
   initialTab?: TabType;
@@ -1485,6 +1485,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
   const sidebarTabs: { key: TabType; label: string; icon: React.ReactNode }[] = useMemo(() => [
     { key: 'general',        label: i18nService.t('general'),        icon: <Cog6ToothIcon className="h-5 w-5" /> },
     { key: 'model',          label: i18nService.t('model'),          icon: <CubeIcon className="h-5 w-5" /> },
+    { key: 'webSearch',      label: i18nService.t('webSearchTab'),   icon: <GlobeAltIcon className="h-5 w-5" /> },
     { key: 'im',             label: i18nService.t('imBot'),          icon: <ChatBubbleLeftIcon className="h-5 w-5" /> },
     { key: 'email',          label: i18nService.t('emailTab'),       icon: <EnvelopeIcon className="h-5 w-5" /> },
     { key: 'coworkMemory',   label: i18nService.t('coworkMemoryTitle'), icon: <BrainIcon className="h-5 w-5" /> },
@@ -1802,6 +1803,35 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
           </div>
         );
 
+      case 'webSearch':
+        return (
+          <div className="space-y-6">
+            <div className="space-y-3 rounded-xl border px-4 py-4 dark:border-claude-darkBorder border-claude-border">
+              <div className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                {i18nService.t('webSearchTitle')}
+              </div>
+              <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                {i18nService.t('webSearchDesc')}
+              </p>
+              <div className="space-y-1">
+                <label className="block text-xs font-medium dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('jinaApiKeyLabel')}
+                </label>
+                <input
+                  type="password"
+                  value={jinaApiKey}
+                  onChange={(e) => setJinaApiKey(e.target.value)}
+                  placeholder={i18nService.t('jinaApiKeyPlaceholder')}
+                  className="w-full rounded-lg border px-3 py-2 text-sm dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-white dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent"
+                />
+                <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('jinaApiKeyHint')}
+                </p>
+              </div>
+            </div>
+          </div>
+        );
+
       case 'coworkMemory':
         return (
           <div className="space-y-6">
@@ -1845,27 +1875,6 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
                   </span>
                 </span>
               </label>
-            </div>
-
-            <div className="space-y-3 rounded-xl border px-4 py-4 dark:border-claude-darkBorder border-claude-border">
-              <div className="text-sm font-medium dark:text-claude-darkText text-claude-text">
-                {i18nService.t('webSearchTitle')}
-              </div>
-              <div className="space-y-1">
-                <label className="block text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                  {i18nService.t('jinaApiKeyLabel')}
-                </label>
-                <input
-                  type="password"
-                  value={jinaApiKey}
-                  onChange={(e) => setJinaApiKey(e.target.value)}
-                  placeholder={i18nService.t('jinaApiKeyPlaceholder')}
-                  className="w-full rounded-lg border px-3 py-2 text-sm dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-white dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent"
-                />
-                <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
-                  {i18nService.t('jinaApiKeyHint')}
-                </p>
-              </div>
             </div>
 
             <div className="space-y-4 rounded-xl border px-4 py-4 dark:border-claude-darkBorder border-claude-border">
