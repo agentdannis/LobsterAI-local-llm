@@ -1817,10 +1817,13 @@ export class CoworkRunner extends EventEmitter {
     }
     const webSearchPrompt = [
       '## Web Search Strategy',
-      '- Use `web_search` when the user asks about current events, recent news, real-time data, or facts that may have changed.',
-      '- Use `web_fetch` to read the full content of a specific URL.',
-      '- After searching, synthesize the results into a clear answer with source citations.',
-      '- Do not search for things you already know with confidence; only search when the query requires fresh or external information.',
+      '- You have `web_search` and `web_fetch` tools. Use them proactively — do not wait for the user to ask.',
+      '- **Always search** for: academic papers, research topics, technical documentation, libraries/APIs, specific people or organizations, statistics, product info, or any claim that benefits from a source.',
+      '- **Always fetch** when the user pastes or mentions a URL — call `web_fetch` on it immediately.',
+      '- For academic research: search the paper title or topic, fetch the most relevant result, then summarize findings with citations.',
+      '- Prefer `web_search` → `web_fetch` (search first, then read top results) over guessing from memory.',
+      '- After searching, synthesize results into a clear answer with source links.',
+      '- Only skip searching when the answer is trivially obvious (e.g. simple math, basic definitions you are certain about).',
     ].join('\n');
     const trimmedBasePrompt = baseSystemPrompt?.trim();
     return [safetyPrompt, localTimePrompt, userMemoriesXml, memoryRecallPrompt.join('\n'), webSearchPrompt, trimmedBasePrompt]
