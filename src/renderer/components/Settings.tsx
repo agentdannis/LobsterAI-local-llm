@@ -372,6 +372,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
   const [coworkExecutionMode, setCoworkExecutionMode] = useState<CoworkExecutionMode>(coworkConfig.executionMode || 'local');
   const [coworkMemoryEnabled, setCoworkMemoryEnabled] = useState<boolean>(coworkConfig.memoryEnabled ?? true);
   const [coworkMemoryLlmJudgeEnabled, setCoworkMemoryLlmJudgeEnabled] = useState<boolean>(coworkConfig.memoryLlmJudgeEnabled ?? false);
+  const [jinaApiKey, setJinaApiKey] = useState<string>(coworkConfig.jinaApiKey ?? '');
   const [coworkMemoryEntries, setCoworkMemoryEntries] = useState<CoworkUserMemoryEntry[]>([]);
   const [coworkMemoryStats, setCoworkMemoryStats] = useState<CoworkMemoryStats | null>(null);
   const [coworkMemoryListLoading, setCoworkMemoryListLoading] = useState<boolean>(false);
@@ -388,10 +389,12 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
     setCoworkExecutionMode(coworkConfig.executionMode || 'local');
     setCoworkMemoryEnabled(coworkConfig.memoryEnabled ?? true);
     setCoworkMemoryLlmJudgeEnabled(coworkConfig.memoryLlmJudgeEnabled ?? false);
+    setJinaApiKey(coworkConfig.jinaApiKey ?? '');
   }, [
     coworkConfig.executionMode,
     coworkConfig.memoryEnabled,
     coworkConfig.memoryLlmJudgeEnabled,
+    coworkConfig.jinaApiKey,
   ]);
 
   const loadCoworkSandboxStatus = useCallback(async () => {
@@ -716,7 +719,8 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
 
   const hasCoworkConfigChanges = coworkExecutionMode !== coworkConfig.executionMode
     || coworkMemoryEnabled !== coworkConfig.memoryEnabled
-    || coworkMemoryLlmJudgeEnabled !== coworkConfig.memoryLlmJudgeEnabled;
+    || coworkMemoryLlmJudgeEnabled !== coworkConfig.memoryLlmJudgeEnabled
+    || jinaApiKey !== (coworkConfig.jinaApiKey ?? '');
 
   const coworkSandboxDisabled = !coworkSandboxStatus?.supported
     || !coworkSandboxStatus?.runtimeReady
@@ -952,6 +956,7 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
           executionMode: coworkExecutionMode,
           memoryEnabled: coworkMemoryEnabled,
           memoryLlmJudgeEnabled: coworkMemoryLlmJudgeEnabled,
+          jinaApiKey: jinaApiKey.trim(),
         });
       }
 
@@ -1840,6 +1845,27 @@ const Settings: React.FC<SettingsProps> = ({ onClose, initialTab, notice }) => {
                   </span>
                 </span>
               </label>
+            </div>
+
+            <div className="space-y-3 rounded-xl border px-4 py-4 dark:border-claude-darkBorder border-claude-border">
+              <div className="text-sm font-medium dark:text-claude-darkText text-claude-text">
+                {i18nService.t('webSearchTitle')}
+              </div>
+              <div className="space-y-1">
+                <label className="block text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('jinaApiKeyLabel')}
+                </label>
+                <input
+                  type="password"
+                  value={jinaApiKey}
+                  onChange={(e) => setJinaApiKey(e.target.value)}
+                  placeholder={i18nService.t('jinaApiKeyPlaceholder')}
+                  className="w-full rounded-lg border px-3 py-2 text-sm dark:border-claude-darkBorder border-claude-border dark:bg-claude-darkBg bg-white dark:text-claude-darkText text-claude-text focus:outline-none focus:ring-2 focus:ring-claude-accent"
+                />
+                <p className="text-xs dark:text-claude-darkTextSecondary text-claude-textSecondary">
+                  {i18nService.t('jinaApiKeyHint')}
+                </p>
+              </div>
             </div>
 
             <div className="space-y-4 rounded-xl border px-4 py-4 dark:border-claude-darkBorder border-claude-border">

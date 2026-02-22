@@ -2624,7 +2624,15 @@ export class CoworkRunner extends EventEmitter {
           )
         );
       }
-      // Web search tools (Jina AI, no API key required)
+      // Web search tools (Jina AI, optional API key for higher rate limits)
+      const jinaHeaders: Record<string, string> = {
+        'Accept': 'text/markdown',
+        'X-Return-Format': 'markdown',
+        'X-No-Cache': 'true',
+      };
+      if (config.jinaApiKey) {
+        jinaHeaders['Authorization'] = `Bearer ${config.jinaApiKey}`;
+      }
       memoryTools.push(
         tool(
           'web_search',
@@ -2637,11 +2645,7 @@ export class CoworkRunner extends EventEmitter {
             try {
               const encoded = encodeURIComponent(args.query);
               const response = await fetch(`https://s.jina.ai/${encoded}`, {
-                headers: {
-                  'Accept': 'text/markdown',
-                  'X-Return-Format': 'markdown',
-                  'X-No-Cache': 'true',
-                },
+                headers: jinaHeaders,
                 signal: AbortSignal.timeout(30000),
               });
               if (!response.ok) {
@@ -2670,12 +2674,9 @@ export class CoworkRunner extends EventEmitter {
           async (args: { url: string }) => {
             try {
               const encoded = encodeURIComponent(args.url);
+              const fetchHeaders = { ...jinaHeaders, 'X-Retain-Images': 'none' };
               const response = await fetch(`https://r.jina.ai/${encoded}`, {
-                headers: {
-                  'Accept': 'text/markdown',
-                  'X-Return-Format': 'markdown',
-                  'X-Retain-Images': 'none',
-                },
+                headers: fetchHeaders,
                 signal: AbortSignal.timeout(30000),
               });
               if (!response.ok) {

@@ -57,6 +57,7 @@ export interface CoworkConfig {
   memoryLlmJudgeEnabled: boolean;
   memoryGuardLevel: 'strict' | 'standard' | 'relaxed';
   memoryUserMemoriesMaxItems: number;
+  jinaApiKey: string;
 }
 
 export type CoworkConfigUpdate = Partial<Pick<
@@ -68,6 +69,7 @@ export type CoworkConfigUpdate = Partial<Pick<
   | 'memoryLlmJudgeEnabled'
   | 'memoryGuardLevel'
   | 'memoryUserMemoriesMaxItems'
+  | 'jinaApiKey'
 >>;
 
 export interface CoworkApiConfig {

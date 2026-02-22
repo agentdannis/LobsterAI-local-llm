@@ -398,6 +398,7 @@ export interface CoworkConfig {
   memoryLlmJudgeEnabled: boolean;
   memoryGuardLevel: CoworkMemoryGuardLevel;
   memoryUserMemoriesMaxItems: number;
+  jinaApiKey: string;
 }
 
 export type CoworkConfigUpdate = Partial<Pick<
@@ -409,6 +410,7 @@ export type CoworkConfigUpdate = Partial<Pick<
   | 'memoryLlmJudgeEnabled'
   | 'memoryGuardLevel'
   | 'memoryUserMemoriesMaxItems'
+  | 'jinaApiKey'
 >>;
 
 export interface ApplyTurnMemoryUpdatesOptions {
@@ -831,6 +833,7 @@ export class CoworkStore {
     const memoryLlmJudgeEnabledRow = this.getOne<ConfigRow>('SELECT value FROM cowork_config WHERE key = ?', ['memoryLlmJudgeEnabled']);
     const memoryGuardLevelRow = this.getOne<ConfigRow>('SELECT value FROM cowork_config WHERE key = ?', ['memoryGuardLevel']);
     const memoryUserMemoriesMaxItemsRow = this.getOne<ConfigRow>('SELECT value FROM cowork_config WHERE key = ?', ['memoryUserMemoriesMaxItems']);
+    const jinaApiKeyRow = this.getOne<ConfigRow>('SELECT value FROM cowork_config WHERE key = ?', ['jinaApiKey']);
 
     const normalizedExecutionMode =
       executionModeRow?.value === 'container' ? 'sandbox' : (executionModeRow?.value as CoworkExecutionMode);
@@ -850,6 +853,7 @@ export class CoworkStore {
       ),
       memoryGuardLevel: normalizeMemoryGuardLevel(memoryGuardLevelRow?.value),
       memoryUserMemoriesMaxItems: clampMemoryUserMemoriesMaxItems(Number(memoryUserMemoriesMaxItemsRow?.value)),
+      jinaApiKey: jinaApiKeyRow?.value || '',
     };
   }
 
@@ -924,6 +928,16 @@ export class CoworkStore {
           value = excluded.value,
           updated_at = excluded.updated_at
       `, [String(clampMemoryUserMemoriesMaxItems(config.memoryUserMemoriesMaxItems)), now]);
+    }
+
+    if (config.jinaApiKey !== undefined) {
+      this.db.run(`
+        INSERT INTO cowork_config (key, value, updated_at)
+        VALUES ('jinaApiKey', ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          updated_at = excluded.updated_at
+      `, [config.jinaApiKey, now]);
     }
 
     this.saveDb();
